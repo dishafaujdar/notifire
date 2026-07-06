@@ -46,8 +46,8 @@ describe('PostgresQueueAdapter', () => {
     await waitFor(() => expect(handler).toHaveBeenCalledWith(job));
     await adapter.stop();
 
-    expect(listener.query).toHaveBeenCalledWith('LISTEN notifyre_jobs');
-    expect(listener.query).toHaveBeenCalledWith('UNLISTEN notifyre_jobs');
+    expect(listener.query).toHaveBeenCalledWith('LISTEN notifire_jobs');
+    expect(listener.query).toHaveBeenCalledWith('UNLISTEN notifire_jobs');
     expect(listener.release).toHaveBeenCalledOnce();
   });
 });

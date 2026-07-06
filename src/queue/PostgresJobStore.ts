@@ -22,12 +22,12 @@ export class PostgresJobStore {
   async enqueue(job: NotificationJob, options: EnqueueOptions = {}): Promise<void> {
     await this.database.query(
       `WITH inserted AS (
-         INSERT INTO notifyre_jobs
+         INSERT INTO notifire_jobs
            (id, payload, channel, priority, scheduled_at)
          VALUES ($1, $2::jsonb, $3, $4, $5)
          RETURNING id
        )
-       SELECT pg_notify('notifyre_jobs', id::text)
+       SELECT pg_notify('notifire_jobs', id::text)
        FROM inserted`,
       [
         job.id,
@@ -43,14 +43,14 @@ export class PostgresJobStore {
     const result = await this.database.query<JobRow>(
       `WITH candidate AS (
          SELECT id
-         FROM notifyre_jobs
+         FROM notifire_jobs
          WHERE status = 'pending'
            AND scheduled_at <= now()
          ORDER BY priority DESC, scheduled_at, created_at
          FOR UPDATE SKIP LOCKED
          LIMIT 1
        )
-       UPDATE notifyre_jobs AS job
+       UPDATE notifire_jobs AS job
        SET status = 'claimed',
            claimed_at = now(),
            claimed_by = $1,
@@ -67,7 +67,7 @@ export class PostgresJobStore {
   async settle(jobId: string, workerId: string, result: JobResult, retryDelayMs = 1_000): Promise<boolean> {
     if (result.ok) {
       return this.updateClaim(
-        `UPDATE notifyre_jobs
+        `UPDATE notifire_jobs
          SET status = 'completed',
              completed_at = now(),
              claimed_at = NULL,
@@ -83,7 +83,7 @@ export class PostgresJobStore {
 
     if (result.retry) {
       return this.updateClaim(
-        `UPDATE notifyre_jobs
+        `UPDATE notifire_jobs
          SET status = 'pending',
              scheduled_at = now() + ($3 * interval '1 millisecond'),
              claimed_at = NULL,
@@ -98,7 +98,7 @@ export class PostgresJobStore {
     }
 
     return this.updateClaim(
-      `UPDATE notifyre_jobs
+      `UPDATE notifire_jobs
        SET status = 'failed',
            claimed_at = NULL,
            claimed_by = NULL,
@@ -113,7 +113,7 @@ export class PostgresJobStore {
 
   async reclaimExpired(leaseTimeoutMs = 30_000): Promise<number> {
     const result = await this.database.query<CountRow>(
-      `UPDATE notifyre_jobs
+      `UPDATE notifire_jobs
        SET status = 'pending',
            scheduled_at = now(),
            claimed_at = NULL,

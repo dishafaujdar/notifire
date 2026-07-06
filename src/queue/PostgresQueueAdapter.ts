@@ -82,7 +82,7 @@ export class PostgresQueueAdapter implements QueueAdapter {
     if (this.listener) {
       this.listener.removeAllListeners('notification');
       try {
-        await this.listener.query('UNLISTEN notifyre_jobs');
+        await this.listener.query('UNLISTEN notifire_jobs');
       } finally {
         this.listener.release();
         this.listener = undefined;
@@ -103,11 +103,11 @@ export class PostgresQueueAdapter implements QueueAdapter {
 
       this.listener = listener;
       listener.on('notification', (message) => {
-        if (message.channel === 'notifyre_jobs') {
+        if (message.channel === 'notifire_jobs') {
           this.wakeWorkers();
         }
       });
-      await listener.query('LISTEN notifyre_jobs');
+      await listener.query('LISTEN notifire_jobs');
       this.wakeWorkers();
     } catch (error) {
       this.options.onError?.(error);

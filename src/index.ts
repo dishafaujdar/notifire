@@ -1,4 +1,4 @@
-export { Notifyre } from './Notifyre.js';
+export { Notifire } from './Notifire.js';
 export { InMemoryQueueAdapter } from './queue/InMemoryQueueAdapter.js';
 export type { QueueAdapter } from './queue/QueueAdapter.js';
 export { PostgresJobStore } from './queue/PostgresJobStore.js';

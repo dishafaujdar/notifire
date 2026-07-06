@@ -1,13 +1,13 @@
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Notifyre } from '../src/Notifyre.js';
+import { Notifire } from '../src/Notifire.js';
 import type { ChannelProvider } from '../src/providers/ChannelProvider.js';
 import type { QueueAdapter } from '../src/queue/QueueAdapter.js';
 import type { EmailMessage } from '../src/types.js';
 
 const templatesDir = resolve('templates');
 
-describe('Notifyre', () => {
+describe('Notifire', () => {
   let provider: ChannelProvider<EmailMessage>;
 
   beforeEach(() => {
@@ -18,9 +18,9 @@ describe('Notifyre', () => {
   });
 
   it('throws if workflow is not registered', async () => {
-    const notifyre = new Notifyre({ templatesDir, provider: { email: provider } });
+    const notifire = new Notifire({ templatesDir, provider: { email: provider } });
 
-    await expect(notifyre.trigger('missing.workflow', {
+    await expect(notifire.trigger('missing.workflow', {
       recipient: { email: 'person@example.com' },
       data: {}
     })).rejects.toThrow('Workflow "missing.workflow" is not registered.');
@@ -35,13 +35,13 @@ describe('Notifyre', () => {
       consume: vi.fn(),
       stop: vi.fn(async () => undefined)
     };
-    const notifyre = new Notifyre({ queue, templatesDir, provider: { email: provider } });
-    notifyre.defineWorkflow({
+    const notifire = new Notifire({ queue, templatesDir, provider: { email: provider } });
+    notifire.defineWorkflow({
       trigger: 'otp.requested',
       steps: [{ channel: 'email', templateId: 'otp-email.hbs' }]
     });
 
-    await expect(notifyre.trigger('otp.requested', {
+    await expect(notifire.trigger('otp.requested', {
       recipient: { email: 'person@example.com' },
       data: data as unknown as Record<string, unknown>
     })).rejects.toThrow('Notification payload data must be an object.');
@@ -55,24 +55,24 @@ describe('Notifyre', () => {
       sentMessages.push(message);
       return { ok: true as const };
     });
-    const notifyre = new Notifyre({
+    const notifire = new Notifire({
       templatesDir,
       provider: { email: { name: 'test-email', send } }
     });
-    notifyre.defineWorkflow({
+    notifire.defineWorkflow({
       trigger: 'otp.requested',
       steps: [{ channel: 'email', templateId: 'otp-email.hbs' }]
     });
 
-    notifyre.start();
-    await notifyre.trigger('otp.requested', {
+    notifire.start();
+    await notifire.trigger('otp.requested', {
       recipient: { email: 'person@example.com' },
       data: { code: '908172', expiresInSec: 180 }
     });
     await waitFor(() => expect(send).toHaveBeenCalled());
 
     expect(sentMessages[0]?.html).toContain('908172');
-    expect(sentMessages[0]?.subject).toBe('Your Notifyre verification code');
+    expect(sentMessages[0]?.subject).toBe('Your Notifire verification code');
   });
 
   it('renders subscription HTML with interpolated data', async () => {
@@ -81,17 +81,17 @@ describe('Notifyre', () => {
       sentMessages.push(message);
       return { ok: true as const };
     });
-    const notifyre = new Notifyre({
+    const notifire = new Notifire({
       templatesDir,
       provider: { email: { name: 'test-email', send } }
     });
-    notifyre.defineWorkflow({
+    notifire.defineWorkflow({
       trigger: 'subscription.confirmed',
       steps: [{ channel: 'email', templateId: 'subscription-welcome.hbs' }]
     });
 
-    notifyre.start();
-    await notifyre.trigger('subscription.confirmed', {
+    notifire.start();
+    await notifire.trigger('subscription.confirmed', {
       recipient: { email: 'person@example.com' },
       data: { planName: 'Team', renewsOn: '2026-08-01' }
     });

@@ -1,5 +1,5 @@
 {
-  "name": "notifyre-core",
+  "name": "notifire-core",
   "version": "0.1.0",
   "description": "Self-hosted notification library for Node.js.",
   "type": "module",

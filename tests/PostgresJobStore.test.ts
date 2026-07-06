@@ -19,8 +19,8 @@ describe('PostgresJobStore', () => {
     await store.enqueue(job, { priority: 10, scheduledAt: new Date('2026-07-07T00:00:00Z') });
 
     expect(query).toHaveBeenCalledOnce();
-    expect(query.mock.calls[0]?.[0]).toContain('INSERT INTO notifyre_jobs');
-    expect(query.mock.calls[0]?.[0]).toContain("pg_notify('notifyre_jobs'");
+    expect(query.mock.calls[0]?.[0]).toContain('INSERT INTO notifire_jobs');
+    expect(query.mock.calls[0]?.[0]).toContain("pg_notify('notifire_jobs'");
     expect(query.mock.calls[0]?.[1]).toEqual([
       job.id,
       JSON.stringify(job),

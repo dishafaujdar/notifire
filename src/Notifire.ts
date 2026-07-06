@@ -7,7 +7,7 @@ import type { QueueAdapter } from './queue/QueueAdapter.js';
 import type { ChannelProvider } from './providers/ChannelProvider.js';
 import type { EmailMessage, JobResult, NotificationJob, TriggerPayload, Workflow } from './types.js';
 
-interface NotifyreConfig {
+interface NotifireConfig {
   queue?: QueueAdapter;
   provider: {
     email: ChannelProvider<EmailMessage>;
@@ -21,14 +21,14 @@ interface ParsedTemplate {
   htmlTemplate: string;
 }
 
-export class Notifyre {
+export class Notifire {
   private readonly queue: QueueAdapter;
-  private readonly provider: NotifyreConfig['provider'];
+  private readonly provider: NotifireConfig['provider'];
   private readonly templatesDir: string;
   private readonly workflows = new Map<string, Workflow>();
   private started = false;
 
-  constructor(config: NotifyreConfig) {
+  constructor(config: NotifireConfig) {
     this.queue = config.queue ?? new InMemoryQueueAdapter();
     this.provider = config.provider;
     this.templatesDir = config.templatesDir;
@@ -87,7 +87,7 @@ export class Notifyre {
 
       // Phase 2: an idempotency/delivery-log insert using ON CONFLICT DO NOTHING will happen here.
       console.log(JSON.stringify({
-        event: 'notifyre.delivery',
+        event: 'notifire.delivery',
         jobId: job.id,
         trigger: job.trigger,
         templateId: job.templateId,

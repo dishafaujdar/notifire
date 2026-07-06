@@ -1,49 +1,49 @@
-# notifyre-core
+# notifire-core
 
 Self-hosted notification library for Node.js. Phase 1 supports email delivery through SMTP, Handlebars templates, and an in-memory queue.
 
 ## Installation
 
 ```sh
-npm install notifyre-core
+npm install notifire-core
 ```
 
 ## Example
 
 ```ts
 import { resolve } from 'node:path';
-import { Notifyre, SMTPEmailProvider } from 'notifyre-core';
+import { Notifire, SMTPEmailProvider } from 'notifire-core';
 
-const notifyre = new Notifyre({
+const notifire = new Notifire({
   templatesDir: resolve('templates'),
   provider: {
     email: new SMTPEmailProvider({
       host: 'localhost',
       port: 1025,
       secure: false,
-      from: 'Notifyre <no-reply@example.com>'
+      from: 'Notifire <no-reply@example.com>'
     })
   }
 });
 
-notifyre.defineWorkflow({
+notifire.defineWorkflow({
   trigger: 'otp.requested',
   steps: [{ channel: 'email', templateId: 'otp-email.hbs' }]
 });
 
-notifyre.defineWorkflow({
+notifire.defineWorkflow({
   trigger: 'subscription.confirmed',
   steps: [{ channel: 'email', templateId: 'subscription-welcome.hbs' }]
 });
 
-notifyre.start();
+notifire.start();
 
-await notifyre.trigger('otp.requested', {
+await notifire.trigger('otp.requested', {
   recipient: { email: 'user@example.com' },
   data: { code: '123456', expiresInSec: 300 }
 });
 
-await notifyre.trigger('subscription.confirmed', {
+await notifire.trigger('subscription.confirmed', {
   recipient: { email: 'user@example.com' },
   data: { planName: 'Team', renewsOn: '2026-08-01' }
 });
