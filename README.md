@@ -1,6 +1,6 @@
 # notifire-core
 
-Self-hosted notification library for Node.js. Phase 1 supports email delivery through SMTP, Handlebars templates, and an in-memory queue.
+Self-hosted notification library for Node.js.
 
 ## Installation
 
