@@ -1,5 +1,6 @@
 export { Notifire } from './Notifire.js';
 export { InMemoryQueueAdapter } from './queue/InMemoryQueueAdapter.js';
+export { BullMQQueueAdapter } from './queue/BullMQQueueAdapter.js';
 export type { QueueAdapter } from './queue/QueueAdapter.js';
 export { PostgresJobStore } from './queue/PostgresJobStore.js';
 export { PostgresLeaseReaper } from './queue/PostgresLeaseReaper.js';

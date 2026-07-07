@@ -10,7 +10,7 @@ describe('PostgresLeaseReaper', () => {
     );
 
     await expect(reaper.runOnce()).resolves.toBe(2);
-    expect(reclaimExpired).toHaveBeenCalledWith(30_000);
+    expect(reclaimExpired).toHaveBeenCalledWith(30_000, 5);
   });
 
   it('reports errors without rejecting the timer loop', async () => {

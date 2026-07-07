@@ -11,6 +11,7 @@ interface PostgresQueueAdapterOptions {
   concurrency?: number;
   pollIntervalMs?: number;
   retryDelayMs?: number;
+  maxAttempts?: number;
   leaseTimeoutMs?: number;
   reaperIntervalMs?: number;
   onError?: (error: unknown) => void;
@@ -23,10 +24,12 @@ export class PostgresQueueAdapter implements QueueAdapter {
   private readonly concurrency: number;
   private readonly pollIntervalMs: number;
   private readonly retryDelayMs: number;
+  private readonly maxAttempts: number;
   private readonly reaper: PostgresLeaseReaper;
   private readonly waiters = new Set<() => void>();
   private handler?: (job: NotificationJob) => Promise<JobResult>;
   private listener?: PoolClient;
+  private listenerReconnectTask?: Promise<void>;
   private workerTasks: Promise<void>[] = [];
   private stopped = false;
 
@@ -34,14 +37,15 @@ export class PostgresQueueAdapter implements QueueAdapter {
     this.concurrency = options.concurrency ?? 1;
     this.pollIntervalMs = options.pollIntervalMs ?? 2_000;
     this.retryDelayMs = options.retryDelayMs ?? 1_000;
+    this.maxAttempts = options.maxAttempts ?? 5;
 
     if (!Number.isInteger(this.concurrency) || this.concurrency < 1) {
       throw new Error('Postgres queue concurrency must be a positive integer.');
     }
 
     const workerPoolMax = options.workerPool.options.max ?? 10;
-    if (workerPoolMax < this.concurrency + 1) {
-      throw new Error(`Worker pool max must be at least concurrency + 1 (${this.concurrency + 1}).`);
+    if (workerPoolMax < this.concurrency + 2) {
+      throw new Error(`Worker pool max must be at least concurrency + 2 (${this.concurrency + 2}).`);
     }
 
     this.enqueueStore = new PostgresJobStore(options.appPool);
@@ -49,6 +53,7 @@ export class PostgresQueueAdapter implements QueueAdapter {
     this.reaper = new PostgresLeaseReaper(this.workerStore, {
       intervalMs: options.reaperIntervalMs,
       leaseTimeoutMs: options.leaseTimeoutMs,
+      maxAttempts: this.maxAttempts,
       onError: options.onError
     });
   }
@@ -81,6 +86,8 @@ export class PostgresQueueAdapter implements QueueAdapter {
 
     if (this.listener) {
       this.listener.removeAllListeners('notification');
+      this.listener.removeAllListeners('error');
+      this.listener.removeAllListeners('end');
       try {
         await this.listener.query('UNLISTEN notifire_jobs');
       } finally {
@@ -95,6 +102,10 @@ export class PostgresQueueAdapter implements QueueAdapter {
 
   private async startListener(): Promise<void> {
     try {
+      if (this.stopped || this.listener) {
+        return;
+      }
+
       const listener = await this.options.workerPool.connect();
       if (this.stopped) {
         listener.release();
@@ -107,11 +118,63 @@ export class PostgresQueueAdapter implements QueueAdapter {
           this.wakeWorkers();
         }
       });
+      listener.on('error', (error) => {
+        this.options.onError?.(error);
+        this.dropListener(listener);
+        if (!this.stopped) {
+          void this.reconnectListener();
+        }
+      });
+      listener.on('end', () => {
+        this.dropListener(listener);
+        if (!this.stopped) {
+          void this.reconnectListener();
+        }
+      });
       await listener.query('LISTEN notifire_jobs');
       this.wakeWorkers();
     } catch (error) {
       this.options.onError?.(error);
+      if (!this.stopped) {
+        void this.reconnectListener();
+      }
     }
+  }
+
+  private reconnectListener(attempt = 0): Promise<void> {
+    this.listenerReconnectTask ??= this.reconnectListenerLoop(attempt).finally(() => {
+      this.listenerReconnectTask = undefined;
+    });
+    return this.listenerReconnectTask;
+  }
+
+  private async reconnectListenerLoop(attempt: number): Promise<void> {
+    const maxDelayMs = 30_000;
+    let nextAttempt = attempt;
+
+    while (!this.stopped && !this.listener) {
+      const exponentialDelayMs = Math.min(maxDelayMs, 1_000 * 2 ** nextAttempt);
+      const jitteredDelayMs = exponentialDelayMs * (0.5 + Math.random() * 0.5);
+      await sleep(jitteredDelayMs);
+      if (this.stopped || this.listener) {
+        return;
+      }
+
+      await this.startListener();
+      nextAttempt += 1;
+    }
+  }
+
+  private dropListener(listener: PoolClient): void {
+    if (this.listener !== listener) {
+      return;
+    }
+
+    listener.removeAllListeners('notification');
+    listener.removeAllListeners('error');
+    listener.removeAllListeners('end');
+    listener.release();
+    this.listener = undefined;
   }
 
   private async workerLoop(workerId: string): Promise<void> {
@@ -124,7 +187,7 @@ export class PostgresQueueAdapter implements QueueAdapter {
         }
 
         const result = await this.runHandler(job);
-        await this.workerStore.settle(job.id, workerId, result, this.retryDelayMs);
+        await this.workerStore.settle(job.id, workerId, result, this.retryDelayMs, this.maxAttempts);
       } catch (error) {
         this.options.onError?.(error);
         await this.waitForWork();
@@ -165,4 +228,11 @@ export class PostgresQueueAdapter implements QueueAdapter {
       wake();
     }
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 }

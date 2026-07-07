@@ -49,7 +49,7 @@ describe('PostgresJobStore', () => {
 
   it.each([
     [{ ok: true as const }, "status = 'completed'", [job.id, 'worker-1']],
-    [{ ok: false as const, retry: true, error: 'Temporary' }, "status = 'pending'", [job.id, 'worker-1', 5_000, 'Temporary']],
+    [{ ok: false as const, retry: true, error: 'Temporary' }, "ELSE 'pending'", [job.id, 'worker-1', 5_000, 'Temporary', 5]],
     [{ ok: false as const, retry: false, error: 'Permanent' }, "status = 'failed'", [job.id, 'worker-1', 'Permanent']]
   ])('settles a claimed job from its result', async (result, expectedStatus, expectedValues) => {
     const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [{ id: job.id }] }));
@@ -60,6 +60,22 @@ describe('PostgresJobStore', () => {
     expect(query.mock.calls[0]?.[0]).toContain(expectedStatus);
     expect(query.mock.calls[0]?.[0]).toContain('claimed_by = $2');
     expect(query.mock.calls[0]?.[1]).toEqual(expectedValues);
+  });
+
+  it('dead-letters retryable failures after max attempts', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [{ id: job.id }] }));
+    const store = new PostgresJobStore({ query } as never);
+
+    await expect(store.settle(
+      job.id,
+      'worker-1',
+      { ok: false, retry: true, error: 'Temporary' },
+      5_000,
+      3
+    )).resolves.toBe(true);
+
+    expect(query.mock.calls[0]?.[0]).toContain("WHEN attempts >= $5 THEN 'dead_letter'");
+    expect(query.mock.calls[0]?.[1]).toEqual([job.id, 'worker-1', 5_000, 'Temporary', 3]);
   });
 
   it('does not settle a job no longer owned by the worker', async () => {
@@ -78,6 +94,8 @@ describe('PostgresJobStore', () => {
     await expect(store.reclaimExpired(30_000)).resolves.toBe(2);
 
     expect(query.mock.calls[0]?.[0]).toContain("claimed_at < now()");
-    expect(query.mock.calls[0]?.[1]).toEqual([30_000]);
+    expect(query.mock.calls[0]?.[0]).toContain('attempts = attempts + 1');
+    expect(query.mock.calls[0]?.[0]).toContain("THEN 'dead_letter'");
+    expect(query.mock.calls[0]?.[1]).toEqual([30_000, 5]);
   });
 });

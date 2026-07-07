@@ -3,6 +3,7 @@ import { PostgresJobStore } from './PostgresJobStore.js';
 interface PostgresLeaseReaperOptions {
   intervalMs?: number;
   leaseTimeoutMs?: number;
+  maxAttempts?: number;
   onError?: (error: unknown) => void;
 }
 
@@ -41,7 +42,7 @@ export class PostgresLeaseReaper {
 
     this.running = true;
     try {
-      return await this.store.reclaimExpired(this.options.leaseTimeoutMs ?? 30_000);
+      return await this.store.reclaimExpired(this.options.leaseTimeoutMs ?? 30_000, this.options.maxAttempts ?? 5);
     } catch (error) {
       this.options.onError?.(error);
       return 0;

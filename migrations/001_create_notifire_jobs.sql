@@ -2,7 +2,8 @@ CREATE TYPE notifire_job_status AS ENUM (
   'pending',
   'claimed',
   'completed',
-  'failed'
+  'failed',
+  'dead_letter'
 );
 
 CREATE TABLE notifire_jobs (
