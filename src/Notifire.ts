@@ -16,6 +16,12 @@ interface NotifireConfig {
   templatesDir: string;
 }
 
+interface CompiledTemplate {
+  subject: Handlebars.TemplateDelegate;
+  html: Handlebars.TemplateDelegate;
+}
+
+
 interface ParsedTemplate {
   subjectTemplate: string;
   htmlTemplate: string;
@@ -27,6 +33,8 @@ export class Notifire {
   private readonly templatesDir: string;
   private readonly workflows = new Map<string, Workflow>();
   private started = false;
+  private readonly templateCache = new Map<string, CompiledTemplate>();
+
 
   constructor(config: NotifireConfig) {
     this.queue = config.queue ?? new InMemoryQueueAdapter();
@@ -57,6 +65,10 @@ export class Notifire {
       throw new Error('Notification payload data must be an object.');
     }
 
+    if(!payload.recipient) {
+      throw new Error('Notification payload recipient is required.');
+    }
+
     // Phase 2: chunked batch insert logic for fan-out to multiple recipients will go here.
     for (const step of workflow.steps) {
       const job: NotificationJob = {
@@ -74,9 +86,9 @@ export class Notifire {
 
   private async processJob(job: NotificationJob): Promise<JobResult> {
     try {
-      const template = await this.loadTemplate(job.templateId);
-      const subject = Handlebars.compile(template.subjectTemplate)(job.data);
-      const html = Handlebars.compile(template.htmlTemplate)(job.data);
+      const template = await this.getCompiledTemplate(job.templateId);
+      const subject = template.subject(job.data);
+      const html = template.html(job.data);
 
       // Phase 2: full-jitter retry will wrap provider.send().
       const result = await this.provider.email.send({
@@ -111,6 +123,21 @@ export class Notifire {
     const filePath = join(this.templatesDir, normalize(templateId));
     const source = await readFile(filePath, 'utf8');
     return parseTemplate(source, templateId);
+  }
+
+  private async getCompiledTemplate(templateId: string): Promise<CompiledTemplate> {
+    const cacheKey = this.templateCache.get(templateId);
+    if (cacheKey) {
+      return cacheKey;
+    }
+
+    const parsedTemplate = await this.loadTemplate(templateId);
+    const compiledTemplate = {
+      subject: Handlebars.compile(parsedTemplate.subjectTemplate),
+      html: Handlebars.compile(parsedTemplate.htmlTemplate)
+    };
+    this.templateCache.set(templateId, compiledTemplate);
+    return compiledTemplate;
   }
 }
 
