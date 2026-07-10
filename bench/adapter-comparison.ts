@@ -119,6 +119,7 @@ async function writeMarkdown(results: BenchResult[]): Promise<void> {
   await writeFile(outputPath, `${lines.join('\n')}\n`);
 }
 
+
 function makeJob(id: string): NotificationJob {
   return {
     id,

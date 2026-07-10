@@ -62,6 +62,11 @@ export class PostgresQueueAdapter implements QueueAdapter {
     await this.enqueueStore.enqueue(job);
   }
 
+  async enqueueBatch(jobs: NotificationJob[]): Promise<void> {
+    await this.enqueueStore.enqueueBatch(jobs);
+  }
+
+
   consume(handler: (job: NotificationJob) => Promise<JobResult>): void {
     if (this.handler) {
       throw new Error('Postgres queue already has a consumer.');
@@ -177,6 +182,8 @@ export class PostgresQueueAdapter implements QueueAdapter {
     this.listener = undefined;
   }
 
+  
+
   private async workerLoop(workerId: string): Promise<void> {
     while (!this.stopped) {
       try {
@@ -187,12 +194,19 @@ export class PostgresQueueAdapter implements QueueAdapter {
         }
 
         const result = await this.runHandler(job);
-        await this.workerStore.settle(job.id, workerId, result, this.retryDelayMs, this.maxAttempts);
+        const delay = backoffMs(job.attempts, this.retryDelayMs);
+        await this.workerStore.settle(job.id, workerId, result, delay, this.maxAttempts);
       } catch (error) {
         this.options.onError?.(error);
         await this.waitForWork();
       }
     }
+
+    function backoffMs(attempts: number, baseMs: number, capMs = 30_000): number {
+      const exponential = Math.min(capMs, baseMs * 2 ** attempts);
+      return Math.random() * exponential;
+    }
+
   }
 
   private async runHandler(job: NotificationJob): Promise<JobResult> {

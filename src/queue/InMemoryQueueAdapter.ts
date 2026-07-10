@@ -14,6 +14,10 @@ export class InMemoryQueueAdapter implements QueueAdapter {
     this.drain();
   }
 
+  async enqueueBatch(jobs: NotificationJob[]): Promise<void> {
+    this.jobs.push(...jobs);
+  }
+
   consume(handler: (job: NotificationJob) => Promise<JobResult>): void {
     this.handler = handler;
     this.drain();

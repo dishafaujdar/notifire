@@ -1,45 +1,32 @@
+// Notifire.ts — thinned down
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join, normalize } from 'node:path';
-import Handlebars from 'handlebars';
 import { InMemoryQueueAdapter } from './queue/InMemoryQueueAdapter.js';
+import { Worker } from './workers/worker.js';
+import { EmailHandler } from './handlers/EmailHandler.js';
 import type { QueueAdapter } from './queue/QueueAdapter.js';
 import type { ChannelProvider } from './providers/ChannelProvider.js';
-import type { EmailMessage, JobResult, NotificationJob, TriggerPayload, Workflow } from './types.js';
+import type { EmailMessage, NotificationJob, TriggerPayload, Workflow } from './types.js';
 
 interface NotifireConfig {
   queue?: QueueAdapter;
   provider: {
     email: ChannelProvider<EmailMessage>;
-    // Phase 2: SMS and push providers will be registered alongside email here.
+    // Phase 2: sms, push registered here
   };
   templatesDir: string;
 }
 
-interface CompiledTemplate {
-  subject: Handlebars.TemplateDelegate;
-  html: Handlebars.TemplateDelegate;
-}
-
-
-interface ParsedTemplate {
-  subjectTemplate: string;
-  htmlTemplate: string;
-}
-
 export class Notifire {
   private readonly queue: QueueAdapter;
-  private readonly provider: NotifireConfig['provider'];
-  private readonly templatesDir: string;
   private readonly workflows = new Map<string, Workflow>();
+  private readonly worker: Worker;
   private started = false;
-  private readonly templateCache = new Map<string, CompiledTemplate>();
-
 
   constructor(config: NotifireConfig) {
     this.queue = config.queue ?? new InMemoryQueueAdapter();
-    this.provider = config.provider;
-    this.templatesDir = config.templatesDir;
+    this.worker = new Worker(this.queue, [
+      new EmailHandler(config.provider.email, config.templatesDir)
+    ]);
   }
 
   defineWorkflow(workflow: Workflow): void {
@@ -47,12 +34,9 @@ export class Notifire {
   }
 
   start(): void {
-    if (this.started) {
-      return;
-    }
-
+    if (this.started) return;
     this.started = true;
-    this.queue.consume((job) => this.processJob(job));
+    this.worker.start();
   }
 
   async trigger(triggerName: string, payload: TriggerPayload): Promise<void> {
@@ -60,109 +44,34 @@ export class Notifire {
     if (!workflow) {
       throw new Error(`Workflow "${triggerName}" is not registered.`);
     }
-
     if (!isRecord(payload?.data)) {
       throw new Error('Notification payload data must be an object.');
     }
-
-    if(!payload.recipient) {
-      throw new Error('Notification payload recipient is required.');
+    if (!payload.recipient?.email) {
+      throw new Error('Notification payload recipient.email is required.');
     }
 
-    // Phase 2: chunked batch insert logic for fan-out to multiple recipients will go here.
+    const recipients = Array.isArray(payload.recipient) ? payload.recipient : [payload.recipient];
+    const CHUNK_SIZE = 5000;
+  
+
     for (const step of workflow.steps) {
-      const job: NotificationJob = {
-        id: randomUUID(),
-        trigger: workflow.trigger,
-        channel: step.channel,
-        recipient: payload.recipient,
-        data: payload.data,
-        templateId: step.templateId
-      };
-
-      await this.queue.enqueue(job);
+      for (let i = 0; i < recipients.length; i += CHUNK_SIZE) {
+        const chunk = recipients.slice(i, i + CHUNK_SIZE);
+        const jobs: NotificationJob[] = chunk.map((recipient) => ({
+          id: randomUUID(),
+          trigger: workflow.trigger,
+          channel: step.channel,
+          recipient,
+          data: payload.data,
+          templateId: step.templateId
+        }));
+        await this.queue.enqueueBatch(jobs); // needs a batch method on QueueAdapter, not N calls to enqueue()
+      }
     }
-  }
-
-  private async processJob(job: NotificationJob): Promise<JobResult> {
-    try {
-      const template = await this.getCompiledTemplate(job.templateId);
-      const subject = template.subject(job.data);
-      const html = template.html(job.data);
-
-      // Phase 2: full-jitter retry will wrap provider.send().
-      const result = await this.provider.email.send({
-        to: job.recipient.email,
-        subject,
-        html
-      });
-
-      // Phase 2: an idempotency/delivery-log insert using ON CONFLICT DO NOTHING will happen here.
-      console.log(JSON.stringify({
-        event: 'notifire.delivery',
-        jobId: job.id,
-        trigger: job.trigger,
-        templateId: job.templateId,
-        provider: this.provider.email.name,
-        status: result.ok ? 'sent' : 'failed',
-        retry: result.ok ? undefined : result.retry,
-        error: result.ok ? undefined : result.error
-      }));
-
-      return result;
-    } catch (error) {
-      return {
-        ok: false,
-        retry: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
-    }
-  }
-
-  private async loadTemplate(templateId: string): Promise<ParsedTemplate> {
-    const filePath = join(this.templatesDir, normalize(templateId));
-    const source = await readFile(filePath, 'utf8');
-    return parseTemplate(source, templateId);
-  }
-
-  private async getCompiledTemplate(templateId: string): Promise<CompiledTemplate> {
-    const cacheKey = this.templateCache.get(templateId);
-    if (cacheKey) {
-      return cacheKey;
-    }
-
-    const parsedTemplate = await this.loadTemplate(templateId);
-    const compiledTemplate = {
-      subject: Handlebars.compile(parsedTemplate.subjectTemplate),
-      html: Handlebars.compile(parsedTemplate.htmlTemplate)
-    };
-    this.templateCache.set(templateId, compiledTemplate);
-    return compiledTemplate;
   }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function parseTemplate(source: string, templateId: string): ParsedTemplate {
-  // Templates keep subject support in frontmatter so each email stays in a single .hbs file.
-  const match = source.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) {
-    throw new Error(`Template "${templateId}" must start with frontmatter containing a subject.`);
-  }
-
-  const subjectLine = match[1]
-    .split('\n')
-    .map((line) => line.trim())
-    .find((line) => line.startsWith('subject:'));
-
-  if (!subjectLine) {
-    throw new Error(`Template "${templateId}" is missing a subject frontmatter field.`);
-  }
-
-  return {
-    subjectTemplate: subjectLine.slice('subject:'.length).trim().replace(/^['"]|['"]$/g, ''),
-    htmlTemplate: match[2]
-  };
 }

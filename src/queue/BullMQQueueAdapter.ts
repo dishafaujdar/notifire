@@ -64,6 +64,30 @@ export class BullMQQueueAdapter implements QueueAdapter {
     this.queueEvents.on('error', (error) => this.options.onError?.(error));
   }
 
+  // async enqueueBatch(jobs: NotificationJob[]): Promise<void> {
+  //   if (jobs.length === 0) return;
+  
+  //   // addBulk pipelines all adds into one Redis round trip — same intent as
+  //   // the batched INSERT in PostgresJobStore, just Redis's version of it.
+  //   await this.queue.addBulk(
+  //     jobs.map((job) => ({
+  //       name: job.trigger,
+  //       data: job,
+  //       opts: { jobId: job.id } // same dedupe-by-jobId guarantee as single enqueue()
+  //     }))
+  //   );
+  // }
+
+  async enqueueBatch(jobs: NotificationJob[]): Promise<void> {
+    const CHUNK_SIZE = 5000; // match your Postgres fan-out chunk size for consistency
+    for (let i = 0; i < jobs.length; i += CHUNK_SIZE) {
+      const chunk = jobs.slice(i, i + CHUNK_SIZE);
+      await this.queue.addBulk(
+        chunk.map((job) => ({ name: job.trigger, data: job, opts: { jobId: job.id } }))
+      );
+    }
+  }
+
   async enqueue(job: NotificationJob): Promise<void> {
     // BullMQ dedupes at enqueue time by jobId. Postgres gets equivalent
     // protection from the notifire_jobs primary key, but at the SQL insert layer.

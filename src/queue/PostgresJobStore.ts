@@ -10,6 +10,7 @@ interface EnqueueOptions {
 
 interface JobRow {
   payload: NotificationJob;
+  attempts: number;
 }
 
 interface CountRow {
@@ -39,7 +40,27 @@ export class PostgresJobStore {
     );
   }
 
-  async claim(workerId: string): Promise<NotificationJob | undefined> {
+  async enqueueBatch(jobs: NotificationJob[], options: EnqueueOptions = {}): Promise<void> {
+    if (jobs.length === 0) return;
+  
+    const values: string[] = [];
+    const params: unknown[] = [];
+    jobs.forEach((job, i) => {
+      const offset = i * 5;
+      values.push(`($${offset + 1}, $${offset + 2}::jsonb, $${offset + 3}, $${offset + 4}, $${offset + 5})`);
+      params.push(job.id, JSON.stringify(job), job.channel, options.priority ?? 0, options.scheduledAt ?? new Date());
+    });
+  
+    await this.database.query(
+      `INSERT INTO notifire_jobs (id, payload, channel, priority, scheduled_at) VALUES ${values.join(', ')}`,
+      params
+    );
+    // Note: intentionally skipping pg_notify per-row here — one NOTIFY per batch insert
+    // is enough to wake workers; N notifies for N jobs is wasted signaling.
+    await this.database.query(`SELECT pg_notify('notifire_jobs', 'batch')`);
+  }
+
+  async claim(workerId: string): Promise<NotificationJob & {attempts: number} | undefined> {
     const result = await this.database.query<JobRow>(
       `WITH candidate AS (
          SELECT id
@@ -57,11 +78,13 @@ export class PostgresJobStore {
            attempts = attempts + 1
        FROM candidate
        WHERE job.id = candidate.id
-       RETURNING job.payload`,
+       RETURNING job.payload job.attempts`,
       [workerId]
     );
 
-    return result.rows[0]?.payload;
+    const row = result.rows[0];
+    if (!row) return undefined;  
+    return { ...row.payload, attempts: row.attempts };
   }
 
   async settle(
