@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import type { Pool } from '../../node_modules/@types/pg/index.js';
 import type { JobResult, NotificationJob } from '../types.js';
 
 type Queryable = Pick<Pool, 'query'>;

@@ -1,11 +1,10 @@
-
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Pool, type PoolClient } from 'pg';
+import { Pool, type PoolClient } from '../node_modules/@types/pg/index.js';
 import { Queue } from 'bullmq';
 import { PostgresJobStore } from '../src/queue/PostgresJobStore.js';
 import type { NotificationJob } from '../src/index.js';
@@ -13,9 +12,16 @@ import type { NotificationJob } from '../src/index.js';
 const execFileAsync = promisify(execFile);
 const jobCount = Number(process.env.DURABILITY_JOB_COUNT ?? 1_000);
 const postgresUrl = process.env.TEST_POSTGRES_URL;
-const redisUrl = process.env.TEST_REDIS_URL;
 const postgresContainer = process.env.POSTGRES_CONTAINER;
-const redisContainer = process.env.REDIS_CONTAINER;
+// FIX: two separate containers, one per persistence mode, instead of one container
+// reconfigured at runtime via CONFIG SET. CONFIG SET without CONFIG REWRITE only
+// changes the *running* process — a fresh process after docker kill/start re-reads
+// the base image defaults and silently drops the setting. Baking the flag into the
+// container's startup command makes it survive any restart.
+const redisEverysecUrl = process.env.TEST_REDIS_EVERYSEC_URL;
+const redisEverysecContainer = process.env.REDIS_EVERYSEC_CONTAINER;
+const redisAlwaysUrl = process.env.TEST_REDIS_ALWAYS_URL;
+const redisAlwaysContainer = process.env.REDIS_ALWAYS_CONTAINER;
 const outputPath = 'bench/results/durability-loss.md';
 
 interface DurabilityResult {
@@ -27,17 +33,25 @@ interface DurabilityResult {
 }
 
 async function main(): Promise<void> {
-  if (!postgresUrl || !redisUrl || !postgresContainer || !redisContainer) {
-    throw new Error('Set TEST_POSTGRES_URL, TEST_REDIS_URL, POSTGRES_CONTAINER, and REDIS_CONTAINER.');
+  if (
+    !postgresUrl ||
+    !postgresContainer ||
+    !redisEverysecUrl ||
+    !redisEverysecContainer ||
+    !redisAlwaysUrl ||
+    !redisAlwaysContainer
+  ) {
+    throw new Error(
+      'Set TEST_POSTGRES_URL, POSTGRES_CONTAINER, TEST_REDIS_EVERYSEC_URL, ' +
+      'REDIS_EVERYSEC_CONTAINER, TEST_REDIS_ALWAYS_URL, REDIS_ALWAYS_CONTAINER.'
+    );
   }
 
   const results: DurabilityResult[] = [];
   results.push(await runPostgres('synchronous_commit=on', 'on'));
   results.push(await runPostgres('synchronous_commit=off', 'off'));
-  // FIX (bug 4): these two Redis modes now actually reconfigure the server via
-  // redis-cli CONFIG SET before the run, instead of just relabeling the same config.
-  results.push(await runRedis('appendfsync=everysec (default)', ['appendfsync', 'everysec']));
-  results.push(await runRedis('appendfsync=always', ['appendfsync', 'always']));
+  results.push(await runRedis('appendfsync=everysec (default)', redisEverysecUrl, redisEverysecContainer));
+  results.push(await runRedis('appendfsync=always', redisAlwaysUrl, redisAlwaysContainer));
   await writeMarkdown(results);
 }
 
@@ -87,16 +101,35 @@ async function runPostgres(mode: string, synchronousCommit: 'on' | 'off'): Promi
   return { backend: 'Postgres', mode, enqueued, recoverable, lost: Math.max(0, enqueued - recoverable) };
 }
 
-async function runRedis(mode: string, config?: [string, string]): Promise<DurabilityResult> {
-  if (config) {
-    await execFileAsync('docker', ['exec', redisContainer!, 'redis-cli', 'CONFIG', 'SET', ...config]);
-  }
-
-  let queue = new Queue<NotificationJob>('notifire_jobs', {
-    connection: { url: redisUrl, maxRetriesPerRequest: null }
+// BullMQ's Queue is an EventEmitter — Node treats an unlistened 'error' event as
+// fatal and crashes the whole process, bypassing any surrounding try/catch. The
+// chaos-kill below deliberately severs the connection, so every Queue we create
+// needs a no-op 'error' listener or the intentional disconnect kills the script.
+function createQueue<T>(name: string, url: string): Queue<T> {
+  const queue = new Queue<T>(name, { connection: { url, maxRetriesPerRequest: null } });
+  queue.on('error', () => {
+    // expected during the chaos-kill window — swallow so it doesn't crash the process
   });
-  // FIX (bug 3): clear leftover jobs from a prior mode's run before this one starts.
-  await queue.obliterate({ force: true }).catch(() => undefined);
+  return queue;
+}
+
+async function runRedis(mode: string, url: string, container: string): Promise<DurabilityResult> {
+  // This container's persistence mode was set via its startup command
+  // (--appendonly yes --appendfsync <mode>), not CONFIG SET, so it survives
+  // the kill/restart below. Verify it's actually active before trusting the run —
+  // fail loud rather than silently benchmarking the wrong configuration.
+  await assertAofActive(container);
+
+  let queue = createQueue<NotificationJob>('notifire_jobs', url);
+
+  // Don't swallow this — a failed obliterate silently leaves leftover jobs from a
+  // prior run in place, which is exactly what produced "209 recoverable from 200
+  // enqueued" earlier. Fail loud instead of hiding contamination.
+  try {
+    await queue.obliterate({ force: true });
+  } catch (error) {
+    throw new Error(`Failed to clear queue before "${mode}" run — refusing to continue with contaminated state: ${error}`);
+  }
 
   let enqueued = 0;
   try {
@@ -107,12 +140,12 @@ async function runRedis(mode: string, config?: [string, string]): Promise<Durabi
 
       if (enqueued === Math.floor(jobCount / 2)) {
         await queue.close();
-        await killAndRestart(redisContainer!);
-        // FIX (bug 2): wait for Redis to actually accept connections again.
-        await waitForRedisReady(redisUrl!);
-        queue = new Queue<NotificationJob>('notifire_jobs', {
-          connection: { url: redisUrl, maxRetriesPerRequest: null }
-        });
+        await killAndRestart(container);
+        await waitForRedisReady(url);
+        // After restart, Redis reloads its AOF file before serving writes correctly —
+        // confirm that reload finished, not just that the TCP port answers.
+        await waitForAofLoadToFinish(container);
+        queue = createQueue<NotificationJob>('notifire_jobs', url);
       }
     }
   } catch (error) {
@@ -121,9 +154,7 @@ async function runRedis(mode: string, config?: [string, string]): Promise<Durabi
     await queue.close().catch(() => undefined);
   }
 
-  const recoverableQueue = new Queue<NotificationJob>('notifire_jobs', {
-    connection: { url: redisUrl, maxRetriesPerRequest: null }
-  });
+  const recoverableQueue = createQueue<NotificationJob>('notifire_jobs', url);
   const counts = await recoverableQueue.getJobCounts('waiting', 'delayed', 'active', 'failed', 'completed');
   await recoverableQueue.close();
   const recoverable = Object.values(counts).reduce((sum, value) => sum + value, 0);
@@ -155,11 +186,36 @@ async function waitForPostgresReady(url: string, timeoutMs = 15_000): Promise<vo
   throw new Error(`Postgres did not become ready within ${timeoutMs}ms: ${String(lastError)}`);
 }
 
+async function assertAofActive(container: string): Promise<void> {
+  const { stdout } = await execFileAsync('docker', ['exec', container, 'redis-cli', 'INFO', 'persistence']);
+  if (!/aof_enabled:1/.test(stdout)) {
+    throw new Error(
+      `Container "${container}" does not have AOF enabled — check its startup command includes --appendonly yes.`
+    );
+  }
+}
+
+// After a restart, Redis has to reload its AOF file from disk before it's safe to
+// trust as "recovered." waitForRedisReady only confirms the TCP port answers, not
+// that the reload actually finished — a query could succeed against a Redis that's
+// still mid-load, meaning "recoverable" gets read before it's true.
+async function waitForAofLoadToFinish(container: string, timeoutMs = 15_000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const { stdout } = await execFileAsync('docker', ['exec', container, 'redis-cli', 'INFO', 'persistence']);
+    if (/loading:0/.test(stdout)) {
+      return;
+    }
+    await sleep(300);
+  }
+  throw new Error(`AOF load did not finish within ${timeoutMs}ms for container "${container}"`);
+}
+
 async function waitForRedisReady(url: string, timeoutMs = 15_000): Promise<void> {
   const start = Date.now();
   let lastError: unknown;
   while (Date.now() - start < timeoutMs) {
-    const probe = new Queue('healthcheck', { connection: { url, maxRetriesPerRequest: null } });
+    const probe = createQueue('healthcheck', url);
     try {
       await probe.waitUntilReady();
       await probe.close();

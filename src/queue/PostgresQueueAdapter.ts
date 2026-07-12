@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Pool, PoolClient } from 'pg';
+import type { Pool, PoolClient } from '../../node_modules/@types/pg/index.js';
 import type { JobResult, NotificationJob } from '../types.js';
 import { PostgresJobStore } from './PostgresJobStore.js';
 import { PostgresLeaseReaper } from './PostgresLeaseReaper.js';

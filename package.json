@@ -1,5 +1,5 @@
 {
-  "name": "notifire-core",
+  "name": "notifire",
   "version": "0.1.0",
   "description": "Self-hosted notification library for Node.js.",
   "type": "module",
@@ -17,12 +17,14 @@
     "dist",
     "migrations",
     "templates",
-    "README.md"
+    "README.md",
+    "license"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
     "bullmq": "^5.79.3",
@@ -40,5 +42,26 @@
     "tsx": "^4.23.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
-  }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dishafaujdar/notifire.git"
+  },
+  "homepage": "https://github.com/dishafaujdar/notifire#readme",
+  "bugs": {
+    "url": "https://github.com/dishafaujdar/notifire/issues"
+  },
+  "keywords": [
+    "notification",
+    "notifications",
+    "email",
+    "sms",
+    "queue",
+    "postgres",
+    "bullmq",
+    "redis",
+    "workflow",
+    "node"
+]
 }
