@@ -10,12 +10,12 @@ export class InMemoryQueueAdapter implements QueueAdapter {
 
   async enqueue(job: NotificationJob): Promise<void> {
     this.jobs.push(job);
-    // Phase 2: a Postgres queue using FOR UPDATE SKIP LOCKED will replace this in-memory array.
     this.drain();
   }
 
   async enqueueBatch(jobs: NotificationJob[]): Promise<void> {
     this.jobs.push(...jobs);
+    this.drain();
   }
 
   consume(handler: (job: NotificationJob) => Promise<JobResult>): void {

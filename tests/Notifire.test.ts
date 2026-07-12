@@ -31,9 +31,10 @@ describe('Notifire', () => {
     ['malformed', null]
   ])('throws if data is %s and never enqueues', async (_caseName, data) => {
     const queue: QueueAdapter = {
-      enqueue: vi.fn(async () => undefined),
+      enqueue: vi.fn().mockResolvedValue(undefined),
+      enqueueBatch: vi.fn().mockResolvedValue(undefined),
       consume: vi.fn(),
-      stop: vi.fn(async () => undefined)
+      stop: vi.fn().mockResolvedValue(undefined)
     };
     const notifire = new Notifire({ queue, templatesDir, provider: { email: provider } });
     notifire.defineWorkflow({

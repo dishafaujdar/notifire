@@ -1,5 +1,5 @@
 {
-  "name": "notifire",
+  "name": "notifire-core",
   "version": "0.1.0",
   "description": "Self-hosted notification library for Node.js.",
   "type": "module",
@@ -38,6 +38,7 @@
     "@types/node": "^22.10.2",
     "@types/nodemailer": "^6.4.17",
     "@types/pg": "^8.20.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "tsup": "^8.3.5",
     "tsx": "^4.23.0",
     "typescript": "^5.7.2",
@@ -63,5 +64,11 @@
     "redis",
     "workflow",
     "node"
-]
+  ],
+  "peerDependencies": {
+    "twilio": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "twilio": { "optional": true }
+  }
 }
