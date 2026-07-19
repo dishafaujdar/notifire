@@ -5,13 +5,13 @@ import { Worker } from './workers/worker.js';
 import { EmailHandler } from './handlers/EmailHandler.js';
 import type { QueueAdapter } from './queue/QueueAdapter.js';
 import type { ChannelProvider } from './providers/ChannelProvider.js';
-import type { EmailMessage, NotificationJob, TriggerPayload, Workflow } from './types.js';
+import type { EmailMessage, InAppMessage, NotificationJob, TriggerPayload, Workflow } from './types.js';
 
 interface NotifireConfig {
   queue?: QueueAdapter;
   provider: {
     email: ChannelProvider<EmailMessage>;
-    // Phase 2: sms, push registered here
+    inApp?: ChannelProvider<InAppMessage>;
   };
   templatesDir: string;
 }

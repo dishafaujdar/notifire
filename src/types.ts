@@ -1,4 +1,12 @@
-export type Channel = 'email';
+export type Channel = 'email' | 'in_app';
+
+export interface InAppMessage {
+  recipientId: string;
+  title: string;
+  body: string;
+  data?: Record<string, unknown>;
+}
+
 
 export interface ChannelHandler {
   channel: Channel;
@@ -14,7 +22,7 @@ export interface NotificationJob {
   id: string;
   trigger: string;
   channel: Channel;
-  recipient: { email: string };
+  recipient: { email?: string; recipientId?: string };
   data: Record<string, unknown>;
   templateId: string;
 }
@@ -26,7 +34,7 @@ export interface EmailMessage {
 }
 
 export interface TriggerPayload {
-  recipient: { email: string };
+  recipient: { email?: string; recipientId?: string };
   data: Record<string, unknown>;
 }
 

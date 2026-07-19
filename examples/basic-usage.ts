@@ -23,6 +23,11 @@ notifire.defineWorkflow({
   steps: [{ channel: 'email', templateId: 'subscription-welcome.hbs' }]
 });
 
+notifire.defineWorkflow({
+  trigger: 'meeting.booked',
+  steps: [{ channel: 'in_app', templateId: 'meeting-booked-in-app.hbs' }]
+});
+
 notifire.start();
 
 await notifire.trigger('otp.requested', {
